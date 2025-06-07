@@ -1,0 +1,21 @@
+# ASP.NET Core
+bin/
+obj/
+*.csproj.user
+*.suo
+*.user
+.vs/
+# Локальные конфиги (если есть секреты)
+appsettings.Development.json
+appsettings.Local.json
+# Пакеты NuGet
+packages/
+# Лог-файлы
+*.log
+# Тестовые результаты
+TestResults/
+# Скомпилированные выходные данные
+bin/
+obj/
+# Файлы сборки
+*.publish/
