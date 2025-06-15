@@ -4,28 +4,29 @@ namespace OnlineTourGuide.Models
 {
     public class User
     {
-        public int Id { get; set; }
-        public string? Email { get; set; }
-        public string? Name { get; set; }
-        public string? PasswordHash { get; set; }
+        public int Id { get; set; } // Явно добавляем Id
+        public string Email { get; set; } // Явно добавляем Email
+        public string PasswordHash { get; set; } // Для хранения хеша пароля
 
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public Role Role { get; set; }
 
         public string? Status { get; set; }
-        public DateTime CreatedAt { get; set; }
+        public string? Name { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public string? ContactInfo { get; set; }
         public string? Description { get; set; }
         public string? Preferences { get; set; }
-        public string? FullName { get; set; } // Для гида
-        public string? Experience { get; set; } // Для гида
-        public string? Residence { get; set; } // Для гида
-        public string? Cities { get; set; } // Города работы
-        public string? Ideas { get; set; } // Интересные идеи
-        public string? PhotosDescription { get; set; } // Описание фотографий
-        public string? OtherInfo { get; set; } // Другая информация
-        public int? OrganizationId { get; set; } // Добавлено
-        public Organization Organization { get; set; } // Добавлено
+        public string? FullName { get; set; }
+        public string? Experience { get; set; }
+        public string? Residence { get; set; }
+        public string? Cities { get; set; }
+        public string? Ideas { get; set; }
+        public string? PhotosDescription { get; set; }
+        public string? OtherInfo { get; set; }
+
+        public int? OrganizationId { get; set; }
+        public virtual Organization? Organization { get; set; }
 
         public List<Excursion> GuidedExcursions { get; set; }
         public List<Excursion> ManagedExcursions { get; set; }

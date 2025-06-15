@@ -15,4 +15,5 @@ public class Attraction
     public decimal? Rating { get; set; }
     public List<Excursion> Excursions { get; set; } = new List<Excursion>();
     public List<Review> Reviews { get; set; } = new List<Review>();
+    public List<ExcursionAttraction> ExcursionAttractions { get; set; } = new List<ExcursionAttraction>();
 }

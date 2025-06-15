@@ -38,6 +38,25 @@ namespace OnlineTourGuide.Controllers
             }
         }
 
+        [HttpGet("top")]
+        public IActionResult GetTopReviews()
+        {
+            var topReviews = _context.Reviews
+                .Where(r => r.ExcursionId != null)
+                .OrderByDescending(r => r.Rating)
+                .Take(3)
+                .ToList() // Выполняем запрос и получаем данные
+                .Select(r => new
+                {
+                    id = r.Id,
+                    text = r.Text,
+                    rating = r.Rating,
+                    userName = _context.Users.FirstOrDefault(u => u.Id == r.UserId)?.Name ?? "Аноним"
+                })
+                .ToList();
+            return Ok(topReviews);
+        }
+
         [HttpPost]
         [Authorize]
         public async Task<ActionResult<Review>> CreateReview([FromBody] Review review)
@@ -104,7 +123,7 @@ namespace OnlineTourGuide.Controllers
 
                 // Обновление рейтинга экскурсии
                 var reviews = await _context.Reviews.Where(r => r.ExcursionId == review.ExcursionId).ToListAsync();
-                excursion.Rating = reviews.Any() ? (decimal)reviews.Average(r => r.Rating) : 0;
+                excursion.Rating = (decimal?)(reviews.Any() ? reviews.Average(r => r.Rating) : 0);
                 await _context.SaveChangesAsync();
 
                 return CreatedAtAction(nameof(GetReviewsForExcursion), new { excursionId = review.ExcursionId }, review);
@@ -145,7 +164,7 @@ namespace OnlineTourGuide.Controllers
                     var excursion = await _context.Excursions.FindAsync(review.ExcursionId.Value);
                     if (excursion != null)
                     {
-                        excursion.Rating = reviews.Any() ? (decimal)reviews.Average(r => r.Rating) : 0;
+                        excursion.Rating = (decimal?)(reviews.Any() ? reviews.Average(r => r.Rating) : 0);
                         await _context.SaveChangesAsync();
                     }
                 }

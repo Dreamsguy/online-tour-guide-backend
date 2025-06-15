@@ -31,7 +31,7 @@ namespace OnlineTourGuide.Controllers
                         a.Name,
                         a.City,
                         Rating = a.Rating.HasValue ? a.Rating.Value.ToString() : "Нет рейтинга",
-                        Coordinates = new { x = a.Coordinates.X, y = a.Coordinates.Y } // Преобразование Point
+                        Coordinates = new { x = a.Coordinates.X, y = a.Coordinates.Y }
                     })
                     .ToListAsync();
                 return Ok(attractions);

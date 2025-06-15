@@ -58,7 +58,10 @@ public class OrganizationsController : ControllerBase
                 e.Title,
                 e.Description,
                 e.City,
-                e.Price,
+                // Исправляем тип для Prices
+                Prices = e.Tickets.Any() ?
+                    e.Tickets.Select(t => new { t.Type, t.Price }).Cast<object>().ToList() :
+                    new List<object> { new { Type = "N/A", Price = 0m } },
                 e.Rating
             }).ToList();
 

@@ -1,24 +1,26 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using OnlineTourGuide.Data;
-using System.Text;
 using NetTopologySuite;
 using System.Text.Json.Serialization;
-using OnlineTourGuide;
+using OnlineTourGuide.Data;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using OnlineTourGuide.Models;
+using System.Text;
+using OnlineTourGuide;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Настройка логирования
+// Указываем порт явно
+builder.WebHost.UseUrls("http://localhost:5248");
+
 builder.Services.AddLogging(logging =>
 {
     logging.AddConsole();
     logging.SetMinimumLevel(LogLevel.Debug);
 });
 
-// Контроллеры + поддержка геоточек и циклических ссылок
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -26,62 +28,58 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.Converters.Add(new PointJsonConverter());
     });
 
-// CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", builder =>
     {
         builder.WithOrigins("http://localhost:3000")
                .AllowAnyHeader()
-               .AllowAnyMethod();
+               .AllowAnyMethod()
+               .AllowCredentials();
     });
 });
 
-// БД с поддержкой NetTopologySuite
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseMySql(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
-        new MySqlServerVersion(new Version(8, 0, 40)),
-        mySqlOptions => mySqlOptions.UseNetTopologySuite()
-    )
-);
+{
+    try
+    {
+        options.UseMySql(
+            builder.Configuration.GetConnectionString("DefaultConnection"),
+            new MySqlServerVersion(new Version(8, 0, 40)),
+            mySqlOptions => mySqlOptions.UseNetTopologySuite()
+        );
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine("Database connection error: " + ex.Message);
+    }
+});
 
-// Аутентификация JWT
+// Настройка JWT
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        var jwtSettings = builder.Configuration.GetSection("Jwt").Get<JwtSettings>();
+        if (string.IsNullOrEmpty(jwtSettings?.Key))
+        {
+            throw new ArgumentNullException(nameof(jwtSettings.Key), "JWT Key is not configured.");
+        }
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]))
-        };
-
-        options.Events = new JwtBearerEvents
-        {
-            OnAuthenticationFailed = context =>
-            {
-                var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
-                logger.LogError("Authentication failed: {Error}", context.Exception.Message);
-                return Task.CompletedTask;
-            },
-            OnTokenValidated = context =>
-            {
-                var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
-                logger.LogInformation("Token validated: {Token}", context.SecurityToken);
-                return Task.CompletedTask;
-            }
+            ValidIssuer = jwtSettings.Issuer,
+            ValidAudience = jwtSettings.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key))
         };
     });
 
-// Добавление SignalR
-builder.Services.AddSignalR();
+builder.Services.AddAuthorization();
 
+builder.Services.AddSignalR();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -90,7 +88,6 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// Swagger
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -101,7 +98,6 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-// Обработка ошибок
 app.UseExceptionHandler(errorApp =>
 {
     errorApp.Run(async context =>
@@ -111,8 +107,8 @@ app.UseExceptionHandler(errorApp =>
         if (exceptionHandlerPathFeature?.Error != null)
         {
             var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
-            logger.LogError(exceptionHandlerPathFeature.Error, "An error occurred processing the request.");
-            await context.Response.WriteAsync("Internal Server Error. Check logs for details.");
+            logger.LogError(exceptionHandlerPathFeature.Error, "An error occurred.");
+            await context.Response.WriteAsync("Error. Check console.");
         }
     });
 });
@@ -120,23 +116,20 @@ app.UseExceptionHandler(errorApp =>
 app.UseHttpsRedirection();
 app.UseCors("AllowFrontend");
 
-// Порядок middleware: UseRouting перед UseAuthentication и UseAuthorization
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Настройка маршрутов для контроллеров и SignalR
 app.UseEndpoints(endpoints =>
 {
     endpoints.MapControllers();
     endpoints.MapHub<ChatHub>("/chatHub");
 });
 
-app.UseStaticFiles(); // Для доступа к wwwroot/images
+app.UseStaticFiles();
 
 app.Run();
 
-// Убедитесь, что ChatHub определён
 public class ChatHub : Hub
 {
     public async Task SendMessage(int senderId, int receiverId, string message)

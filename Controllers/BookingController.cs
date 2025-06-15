@@ -130,78 +130,46 @@ namespace OnlineTourGuide.Controllers
             try
             {
                 if (bookingModel == null)
-                {
                     return BadRequest(new { message = "Тело запроса не может быть пустым." });
-                }
-
-                _logger.LogInformation("Получен запрос на бронирование: {@BookingModel}", bookingModel);
 
                 var userIdClaim = User.FindFirst(ClaimTypes.Name)?.Value;
                 if (string.IsNullOrEmpty(userIdClaim))
-                {
                     return Unauthorized(new { message = "Пользователь не авторизован." });
-                }
 
-                var userId = int.Parse(userIdClaim);
+                int userId = int.Parse(userIdClaim); // Простое приведение, ошибка обработается ниже
                 if (userId != bookingModel.UserId)
-                {
                     return Unauthorized(new { message = "Вы можете бронировать только от своего имени." });
-                }
 
                 var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
                 if (user == null || user.Role != Role.User)
-                {
                     return Unauthorized(new { message = "Только пользователи могут бронировать экскурсии." });
-                }
 
                 var excursion = await _context.Excursions
-                    .Include(e => e.Availability)
+                    .Include(e => e.Tickets)
                     .FirstOrDefaultAsync(e => e.Id == bookingModel.ExcursionId);
                 if (excursion == null)
-                {
                     return NotFound(new { message = $"Экскурсия с Id {bookingModel.ExcursionId} не найдена" });
-                }
 
                 if (!excursion.GuideId.HasValue)
-                {
                     return BadRequest(new { message = "У экскурсии нет назначенного гида" });
-                }
 
-                if (string.IsNullOrEmpty(bookingModel.TicketCategory))
-                {
-                    return BadRequest(new { message = "Категория билета обязательна." });
-                }
+                if (string.IsNullOrEmpty(bookingModel.TicketCategory) || string.IsNullOrEmpty(bookingModel.DateTime))
+                    return BadRequest(new { message = "Категория и дата/время бронирования обязательны." });
 
-                if (string.IsNullOrEmpty(bookingModel.DateTime))
-                {
-                    return BadRequest(new { message = "Дата и время бронирования обязательны." });
-                }
-
-                // Парсим строку даты в DateTime
                 if (!DateTime.TryParseExact(bookingModel.DateTime, "yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsedDateTime))
-                {
                     return BadRequest(new { message = "Неверный формат даты. Ожидается: yyyy-MM-dd HH:mm" });
-                }
 
-                // Сравниваем DateTime напрямую
-                var availability = await _context.ExcursionAvailability
-                    .FirstOrDefaultAsync(a => a.ExcursionId == bookingModel.ExcursionId &&
-                                             a.AvailableDateTime == parsedDateTime &&
-                                             a.TicketCategory == bookingModel.TicketCategory);
+                var ticket = excursion.Tickets.FirstOrDefault(t =>
+                    t.Date == parsedDateTime.ToString("yyyy-MM-dd") &&
+                    t.Time == parsedDateTime.ToString("HH:mm") &&
+                    t.Type == bookingModel.TicketCategory);
 
-                if (availability == null)
-                {
-                    return BadRequest(new { message = $"Дата {bookingModel.DateTime} недоступна для бронирования в категории {bookingModel.TicketCategory}." });
-                }
+                if (ticket == null || ticket.Total - ticket.Sold < (bookingModel.Quantity > 0 ? bookingModel.Quantity : 1))
+                    return BadRequest(new { message = $"Недостаточно билетов в категории {bookingModel.TicketCategory} на {bookingModel.DateTime}." });
 
                 int slots = bookingModel.Quantity > 0 ? bookingModel.Quantity : 1;
-                if (availability.AvailableTickets < slots)
-                {
-                    return BadRequest(new { message = $"Недостаточно билетов в категории {bookingModel.TicketCategory} на {bookingModel.DateTime}. Доступно: {availability.AvailableTickets}." });
-                }
-
-                availability.AvailableTickets -= slots;
-                _context.ExcursionAvailability.Update(availability);
+                ticket.Sold += slots;
+                _context.Excursions.Update(excursion);
 
                 var booking = new Booking
                 {
@@ -213,7 +181,7 @@ namespace OnlineTourGuide.Controllers
                     Status = bookingModel.Status ?? "Pending",
                     Image = bookingModel.Image ?? "default_image.jpg",
                     PaymentMethod = bookingModel.PaymentMethod ?? "NotSpecified",
-                    Total = bookingModel.Total ?? excursion.Price * slots,
+                    Total = bookingModel.Total ?? ticket.Price * slots,
                     Timestamp = DateTime.UtcNow
                 };
 
@@ -223,7 +191,7 @@ namespace OnlineTourGuide.Controllers
                 var guideNotification = new Notification
                 {
                     UserId = excursion.GuideId.Value,
-                    Message = $"Пользователь забронировал: {(excursion.Title ?? "Экскурсия")}",
+                    Message = $"Забронировано: {excursion.Title ?? "Экскурсия"}",
                     Timestamp = DateTime.UtcNow
                 };
                 _context.Notifications.Add(guideNotification);
@@ -231,7 +199,7 @@ namespace OnlineTourGuide.Controllers
                 var userNotification = new Notification
                 {
                     UserId = booking.UserId,
-                    Message = $"Вы забронировали: {(excursion.Title ?? "Экскурсия")}",
+                    Message = $"Вы забронировали: {excursion.Title ?? "Экскурсия"}",
                     Timestamp = DateTime.UtcNow
                 };
                 _context.Notifications.Add(userNotification);
@@ -240,15 +208,17 @@ namespace OnlineTourGuide.Controllers
 
                 return CreatedAtAction(nameof(GetBooking), new { id = booking.Id }, booking);
             }
+            catch (FormatException)
+            {
+                return BadRequest(new { message = "Неверный формат идентификатора пользователя." });
+            }
             catch (DbUpdateException ex)
             {
-                _logger.LogError(ex, "Ошибка при сохранении бронирования: {@BookingModel}", bookingModel);
                 return StatusCode(500, new { message = "Ошибка при сохранении в базу данных", error = ex.InnerException?.Message ?? ex.Message });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при создании бронирования: {@BookingModel}", bookingModel);
-                return StatusCode(500, new { message = "Произошла ошибка на сервера", error = ex.Message });
+                return StatusCode(500, new { message = "Произошла ошибка на сервере", error = ex.Message });
             }
         }
 
@@ -296,14 +266,15 @@ namespace OnlineTourGuide.Controllers
                     return BadRequest(new { message = "Нельзя редактировать завершенные или истёкшие бронирования." });
                 }
 
-                var oldAvailability = await _context.ExcursionAvailability
-                    .FirstOrDefaultAsync(a => a.ExcursionId == booking.ExcursionId &&
-                                             a.AvailableDateTime.ToString("yyyy-MM-dd HH:mm") == booking.DateTime.Value.ToString("yyyy-MM-dd HH:mm") &&
-                                             a.TicketCategory == booking.TicketCategory);
-                if (oldAvailability != null)
+                var excursion = booking.Excursion;
+                var oldTicket = excursion.Tickets.FirstOrDefault(t =>
+                    t.Date == booking.DateTime.Value.ToString("yyyy-MM-dd") &&
+                    t.Time == booking.DateTime.Value.ToString("HH:mm") &&
+                    t.Type == booking.TicketCategory);
+
+                if (oldTicket != null)
                 {
-                    oldAvailability.AvailableTickets += (int)booking.Quantity;
-                    _context.ExcursionAvailability.Update(oldAvailability);
+                    oldTicket.Sold -= (int)booking.Quantity;
                 }
 
                 if (string.IsNullOrEmpty(updatedBooking.DateTime))
@@ -316,28 +287,24 @@ namespace OnlineTourGuide.Controllers
                     return BadRequest(new { message = "Неверный формат даты. Ожидается: yyyy-MM-dd HH:mm" });
                 }
 
-                var newAvailability = await _context.ExcursionAvailability
-                    .FirstOrDefaultAsync(a => a.ExcursionId == booking.ExcursionId &&
-                                             a.AvailableDateTime.ToString("yyyy-MM-dd HH:mm") == updatedBooking.DateTime &&
-                                             a.TicketCategory == updatedBooking.TicketCategory);
-                if (newAvailability == null)
+                var newTicket = excursion.Tickets.FirstOrDefault(t =>
+                    t.Date == parsedDateTime.ToString("yyyy-MM-dd") &&
+                    t.Time == parsedDateTime.ToString("HH:mm") &&
+                    t.Type == updatedBooking.TicketCategory);
+
+                if (newTicket == null || newTicket.Total - newTicket.Sold < (updatedBooking.Quantity > 0 ? updatedBooking.Quantity : 1))
                 {
-                    return BadRequest(new { message = $"Дата {updatedBooking.DateTime} недоступна для бронирования в категории {updatedBooking.TicketCategory}." });
+                    return BadRequest(new { message = $"Недостаточно билетов в категории {updatedBooking.TicketCategory} на {updatedBooking.DateTime}." });
                 }
 
                 int newSlots = updatedBooking.Quantity > 0 ? updatedBooking.Quantity : 1;
-                if (newAvailability.AvailableTickets < newSlots)
-                {
-                    return BadRequest(new { message = $"Недостаточно билетов в категории {updatedBooking.TicketCategory} на {updatedBooking.DateTime}. Доступно: {newAvailability.AvailableTickets}." });
-                }
-
-                newAvailability.AvailableTickets -= newSlots;
-                _context.ExcursionAvailability.Update(newAvailability);
+                newTicket.Sold += newSlots;
+                _context.Excursions.Update(excursion);
 
                 booking.TicketCategory = updatedBooking.TicketCategory ?? booking.TicketCategory ?? "Стандарт";
                 booking.DateTime = parsedDateTime;
                 booking.Quantity = newSlots;
-                booking.Total = booking.Excursion?.Price * newSlots ?? 0;
+                booking.Total = updatedBooking.Total ?? newTicket.Price * newSlots;
 
                 await _context.SaveChangesAsync();
                 return NoContent();
@@ -396,14 +363,16 @@ namespace OnlineTourGuide.Controllers
                     return NotFound(new { message = "Бронирование не найдено." });
                 }
 
-                var availability = await _context.ExcursionAvailability
-                    .FirstOrDefaultAsync(a => a.ExcursionId == booking.ExcursionId &&
-                                             a.AvailableDateTime.ToString("yyyy-MM-dd HH:mm") == booking.DateTime.Value.ToString("yyyy-MM-dd HH:mm") &&
-                                             a.TicketCategory == booking.TicketCategory);
-                if (availability != null)
+                var excursion = booking.Excursion;
+                var ticket = excursion.Tickets.FirstOrDefault(t =>
+                    t.Date == booking.DateTime.Value.ToString("yyyy-MM-dd") &&
+                    t.Time == booking.DateTime.Value.ToString("HH:mm") &&
+                    t.Type == booking.TicketCategory);
+
+                if (ticket != null)
                 {
-                    availability.AvailableTickets += (int)booking.Quantity;
-                    _context.ExcursionAvailability.Update(availability);
+                    ticket.Sold -= (int)booking.Quantity;
+                    _context.Excursions.Update(excursion);
                 }
 
                 booking.Status = "Cancelled";
